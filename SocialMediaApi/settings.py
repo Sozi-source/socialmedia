@@ -120,6 +120,8 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
 # 👇 CUSTOM USER MODEL (you already have this - good!)
 AUTH_USER_MODEL = 'SocialApp.User'
 
