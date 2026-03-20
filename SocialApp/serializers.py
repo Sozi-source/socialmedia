@@ -1,27 +1,17 @@
 from rest_framework import serializers
-from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from .models import Post, Comment, Like, Follow
+from .models import Post, Comment, Like, Follow, Notification
 
 User = get_user_model()
 
 
+# ==================== USER SERIALIZERS ====================
+
 class UserRegistrationSerializer(serializers.ModelSerializer):
-    """
-    Serializer for user registration with password validation
-    """
-    password = serializers.CharField(
-        write_only=True,
-        required=True,
-        style={'input_type': 'password'}
-    )
-    password2 = serializers.CharField(
-        write_only=True,
-        required=True,
-        style={'input_type': 'password'},
-        label="Confirm password"
-    )
+    password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
+    password2 = serializers.CharField(write_only=True, required=True)
     
     class Meta:
         model = User
@@ -36,7 +26,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         }
     
     def validate_password(self, value):
-        """Validate password strength"""
         try:
             validate_password(value)
         except ValidationError as e:
@@ -44,30 +33,17 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, attrs):
-        """Validate that password and password2 match"""
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({"password": "Password fields didn't match."})
         return attrs
     
     def create(self, validated_data):
-        """Create and return a new user"""
-        # Remove password2 from validated_data
         validated_data.pop('password2')
+        optional_fields = ['profile_picture', 'bio', 'first_name', 'last_name']
+        for field in optional_fields:
+            if field in validated_data and not validated_data[field]:
+                validated_data.pop(field)
         
-        # Remove empty strings for optional fields
-        if 'profile_picture' in validated_data and not validated_data['profile_picture']:
-            validated_data.pop('profile_picture')
-        
-        if 'bio' in validated_data and not validated_data['bio']:
-            validated_data.pop('bio')
-        
-        if 'first_name' in validated_data and not validated_data['first_name']:
-            validated_data.pop('first_name')
-        
-        if 'last_name' in validated_data and not validated_data['last_name']:
-            validated_data.pop('last_name')
-        
-        # Create user with the provided data
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
@@ -81,37 +57,33 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    """
-    Serializer for User model - used for displaying user information
-    """
     followers_count = serializers.SerializerMethodField()
     following_count = serializers.SerializerMethodField()
     posts_count = serializers.SerializerMethodField()
     full_name = serializers.SerializerMethodField()
+    is_following = serializers.SerializerMethodField()
     
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name', 'full_name',
-            'bio', 'profile_picture', 'date_joined',
-            'followers_count', 'following_count', 'posts_count'
+            'bio', 'profile_picture', 'cover_photo', 'website', 'location',
+            'is_verified', 'last_active', 'date_joined',
+            'followers_count', 'following_count', 'posts_count', 'is_following'
         ]
-        read_only_fields = ['id', 'date_joined', 'followers_count', 'following_count', 'posts_count']
+        read_only_fields = ['id', 'date_joined', 'is_verified', 'last_active', 
+                           'followers_count', 'following_count', 'posts_count', 'is_following']
     
     def get_followers_count(self, obj):
-        """Get number of followers"""
         return obj.followers.count()
     
     def get_following_count(self, obj):
-        """Get number of users this user follows"""
         return obj.following.count()
     
     def get_posts_count(self, obj):
-        """Get number of posts by this user"""
         return obj.posts.count()
     
     def get_full_name(self, obj):
-        """Get user's full name"""
         if obj.first_name and obj.last_name:
             return f"{obj.first_name} {obj.last_name}"
         elif obj.first_name:
@@ -119,15 +91,21 @@ class UserSerializer(serializers.ModelSerializer):
         elif obj.last_name:
             return obj.last_name
         return obj.username
+    
+    def get_is_following(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return Follow.objects.filter(follower=request.user, following=obj).exists()
+        return False
 
+
+# ==================== POST SERIALIZER ====================
 
 class PostSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Post model
-    """
     author = serializers.ReadOnlyField(source='user.username')
     author_id = serializers.ReadOnlyField(source='user.id')
     author_profile_picture = serializers.ReadOnlyField(source='user.profile_picture')
+    author_is_verified = serializers.ReadOnlyField(source='user.is_verified')
     likes_count = serializers.SerializerMethodField()
     comments_count = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
@@ -136,67 +114,66 @@ class PostSerializer(serializers.ModelSerializer):
     class Meta:
         model = Post
         fields = [
-            'id', 'title', 'content', 'media', 'author', 'author_id', 'author_profile_picture',
+            'id', 'title', 'content', 'media', 'visibility', 'is_pinned',
+            'author', 'author_id', 'author_profile_picture', 'author_is_verified',
             'created_at', 'updated_at', 'likes_count', 'comments_count',
             'is_liked', 'is_author'
         ]
         read_only_fields = [
-            'id', 'author', 'author_id', 'author_profile_picture', 'created_at', 'updated_at',
-            'likes_count', 'comments_count', 'is_liked', 'is_author'
+            'id', 'author', 'author_id', 'author_profile_picture', 'author_is_verified',
+            'created_at', 'updated_at', 'likes_count', 'comments_count', 
+            'is_liked', 'is_author'
         ]
     
     def get_likes_count(self, obj):
-        """Get number of likes on this post"""
         return obj.likes.count()
     
     def get_comments_count(self, obj):
-        """Get number of comments on this post"""
         return obj.comments.count()
     
     def get_is_liked(self, obj):
-        """Check if current user has liked this post"""
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             return obj.likes.filter(user=request.user).exists()
         return False
     
     def get_is_author(self, obj):
-        """Check if current user is the author of this post"""
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             return obj.user == request.user
         return False
 
 
+# ==================== COMMENT SERIALIZER ====================
+
 class CommentSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Comment model
-    """
     author = serializers.ReadOnlyField(source='user.username')
     author_id = serializers.ReadOnlyField(source='user.id')
     author_profile_picture = serializers.ReadOnlyField(source='user.profile_picture')
+    author_is_verified = serializers.ReadOnlyField(source='user.is_verified')
     is_author = serializers.SerializerMethodField()
     
     class Meta:
         model = Comment
         fields = [
-            'id', 'content', 'author', 'author_id', 'author_profile_picture',
+            'id', 'content', 'author', 'author_id', 'author_profile_picture', 'author_is_verified',
             'post', 'created_at', 'updated_at', 'is_author'
         ]
-        read_only_fields = ['id', 'author', 'author_id', 'author_profile_picture', 'created_at', 'updated_at', 'is_author']
+        read_only_fields = [
+            'id', 'author', 'author_id', 'author_profile_picture', 'author_is_verified',
+            'post', 'created_at', 'updated_at', 'is_author'
+        ]
     
     def get_is_author(self, obj):
-        """Check if current user is the author of this comment"""
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             return obj.user == request.user
         return False
 
 
+# ==================== LIKE SERIALIZER ====================
+
 class LikeSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Like model
-    """
     user = serializers.ReadOnlyField(source='user.username')
     user_id = serializers.ReadOnlyField(source='user.id')
     
@@ -206,10 +183,9 @@ class LikeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'user', 'user_id', 'created_at']
 
 
+# ==================== FOLLOW SERIALIZER ====================
+
 class FollowSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Follow model
-    """
     follower = serializers.ReadOnlyField(source='follower.username')
     follower_id = serializers.ReadOnlyField(source='follower.id')
     follower_profile_picture = serializers.ReadOnlyField(source='follower.profile_picture')
@@ -224,3 +200,13 @@ class FollowSerializer(serializers.ModelSerializer):
             'following', 'following_id', 'following_profile_picture', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
+
+
+# ==================== NOTIFICATION SERIALIZER ====================
+
+class NotificationSerializer(serializers.ModelSerializer):
+    actor = UserSerializer(read_only=True)
+    
+    class Meta:
+        model = Notification
+        fields = ['id', 'actor', 'verb', 'target_id', 'target_type', 'timestamp', 'read']

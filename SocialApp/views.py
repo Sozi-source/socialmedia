@@ -7,52 +7,33 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from .models import User, Post, Comment, Like, Follow
+from .models import User, Post, Comment, Like, Follow, Notification
 from .serializers import (
     UserSerializer, UserRegistrationSerializer, PostSerializer,
-    CommentSerializer, LikeSerializer, FollowSerializer
+    CommentSerializer, LikeSerializer, FollowSerializer, NotificationSerializer
 )
 
 
 # ========== HOME VIEW ==========
 def home(request):
-    """API root endpoint"""
     return JsonResponse({
         'message': 'Welcome to E-Chat API',
         'version': '1.0.0',
         'endpoints': {
-            'auth': {
-                'register': '/auth/register/',
-                'login': '/auth/login/',
-                'refresh': '/auth/refresh/',
-            },
-            'users': {
-                'list': '/users/',
-                'detail': '/users/{id}/',
-                'followers': '/users/{id}/followers/',
-                'following': '/users/{id}/following/',
-            },
-            'posts': {
-                'list': '/posts/',
-                'detail': '/posts/{id}/',
-                'like': '/posts/{id}/like/',
-                'comments': '/posts/{id}/comments/',
-            },
-            'comments': {
-                'detail': '/comments/{id}/',
-            },
-            'feed': '/feed/',
-            'follow': '/follow/{id}/',
+            'auth': {'register': '/auth/register/', 'login': '/auth/login/', 'refresh': '/auth/refresh/'},
+            'users': {'list': '/users/', 'detail': '/users/{id}/', 'posts': '/users/{id}/posts/',
+                      'followers': '/users/{id}/followers/', 'following': '/users/{id}/following/'},
+            'posts': {'list': '/posts/', 'detail': '/posts/{id}/', 'like': '/posts/{id}/like/', 
+                      'comments': '/posts/{id}/comments/'},
+            'comments': {'detail': '/comments/{id}/'},
+            'feed': '/feed/', 'follow': '/follow/{id}/',
+            'notifications': '/notifications/'
         }
     })
 
 
 # ========== AUTHENTICATION VIEWS ==========
 class UserRegistrationView(generics.CreateAPIView):
-    """
-    User registration endpoint
-    POST /auth/register/
-    """
     queryset = User.objects.all()
     serializer_class = UserRegistrationSerializer
     permission_classes = [AllowAny]
@@ -76,34 +57,22 @@ class UserRegistrationView(generics.CreateAPIView):
 
 # ========== USER VIEWS ==========
 class UserListView(generics.ListAPIView):
-    """
-    List all users
-    GET /users/
-    """
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        # Optional search filter
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
-                Q(username__icontains=search) |
-                Q(email__icontains=search) |
-                Q(first_name__icontains=search) |
-                Q(last_name__icontains=search)
+                Q(username__icontains=search) | Q(email__icontains=search) |
+                Q(first_name__icontains=search) | Q(last_name__icontains=search)
             )
         return queryset
 
 
 class UserDetailView(generics.RetrieveUpdateAPIView):
-    """
-    Get or update user profile
-    GET /users/{id}/
-    PATCH /users/{id}/
-    """
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -119,19 +88,22 @@ class UserDetailView(generics.RetrieveUpdateAPIView):
         serializer.save()
 
 
+class UserPostsView(generics.ListAPIView):
+    serializer_class = PostSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    
+    def get_queryset(self):
+        user_id = self.kwargs['user_id']
+        return Post.objects.filter(user_id=user_id).order_by('-created_at')
+
+
 # ========== POST VIEWS ==========
 class PostListCreateView(generics.ListCreateAPIView):
-    """
-    List all posts or create a new post
-    GET /posts/
-    POST /posts/
-    """
     serializer_class = PostSerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         queryset = Post.objects.all()
-        # Optional filter by user
         user_id = self.request.query_params.get('user')
         if user_id:
             queryset = queryset.filter(user_id=user_id)
@@ -142,12 +114,6 @@ class PostListCreateView(generics.ListCreateAPIView):
 
 
 class PostRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Get, update, or delete a post
-    GET /posts/{id}/
-    PATCH /posts/{id}/
-    DELETE /posts/{id}/
-    """
     queryset = Post.objects.all()
     serializer_class = PostSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -171,63 +137,41 @@ class PostRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
 
 # ========== FEED VIEW ==========
 class FeedView(generics.ListAPIView):
-    """
-    Get posts from users you follow
-    GET /feed/
-    """
     serializer_class = PostSerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        # Get users that the current user follows
-        following_users = Follow.objects.filter(
-            follower=self.request.user
-        ).values_list('following', flat=True)
-        
-        # Return posts from followed users and own posts
+        following_users = Follow.objects.filter(follower=self.request.user).values_list('following', flat=True)
         return Post.objects.filter(
-            Q(user__in=following_users) | Q(user=self.request.user)
+            Q(user__in=following_users, visibility='public') | Q(user=self.request.user)
         ).order_by('-created_at')
 
 
 # ========== FOLLOW VIEWS ==========
 class FollowToggleView(APIView):
-    """
-    Follow or unfollow a user
-    POST /follow/{user_id}/
-    """
     permission_classes = [IsAuthenticated]
     
     def post(self, request, user_id):
-        """Follow or unfollow a user"""
         user_to_follow = get_object_or_404(User, id=user_id)
         
-        # Prevent self-follow
         if request.user == user_to_follow:
-            return Response(
-                {"error": "You cannot follow yourself"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "You cannot follow yourself"}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Check if already following
-        follow = Follow.objects.filter(
-            follower=request.user,
-            following=user_to_follow
-        ).first()
+        follow = Follow.objects.filter(follower=request.user, following=user_to_follow).first()
         
         if follow:
-            # Unfollow
             follow.delete()
+            Notification.objects.filter(recipient=user_to_follow, actor=request.user, verb='follow').delete()
             return Response({
                 'following': False,
                 'followers_count': user_to_follow.followers.count(),
                 'user_id': user_id
             }, status=status.HTTP_200_OK)
         else:
-            # Follow
-            follow = Follow.objects.create(
-                follower=request.user,
-                following=user_to_follow
+            follow = Follow.objects.create(follower=request.user, following=user_to_follow)
+            Notification.objects.create(
+                recipient=user_to_follow, actor=request.user, verb='follow',
+                target_id=user_to_follow.id, target_type='user'
             )
             return Response({
                 'following': True,
@@ -237,10 +181,6 @@ class FollowToggleView(APIView):
 
 
 class FollowersListView(generics.ListAPIView):
-    """
-    Get followers of a user
-    GET /users/{user_id}/followers/
-    """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     
@@ -251,10 +191,6 @@ class FollowersListView(generics.ListAPIView):
 
 
 class FollowingListView(generics.ListAPIView):
-    """
-    Get users that a user follows
-    GET /users/{user_id}/following/
-    """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     
@@ -266,36 +202,27 @@ class FollowingListView(generics.ListAPIView):
 
 # ========== LIKE VIEWS ==========
 class LikeToggleView(APIView):
-    """
-    Like or unlike a post
-    POST /posts/{post_id}/like/
-    """
     permission_classes = [IsAuthenticated]
     
     def post(self, request, post_id):
-        """Like or unlike a post"""
         post = get_object_or_404(Post, id=post_id)
-        
-        # Check if already liked
-        like = Like.objects.filter(
-            user=request.user,
-            post=post
-        ).first()
+        like = Like.objects.filter(user=request.user, post=post).first()
         
         if like:
-            # Unlike
             like.delete()
+            Notification.objects.filter(recipient=post.user, actor=request.user, verb='like', target_id=post_id).delete()
             return Response({
                 'liked': False,
                 'likes_count': post.likes.count(),
                 'post_id': post_id
             }, status=status.HTTP_200_OK)
         else:
-            # Like
-            like = Like.objects.create(
-                user=request.user,
-                post=post
-            )
+            like = Like.objects.create(user=request.user, post=post)
+            if post.user != request.user:
+                Notification.objects.create(
+                    recipient=post.user, actor=request.user, verb='like',
+                    target_id=post.id, target_type='post'
+                )
             return Response({
                 'liked': True,
                 'likes_count': post.likes.count(),
@@ -305,35 +232,34 @@ class LikeToggleView(APIView):
 
 # ========== COMMENT VIEWS ==========
 class CommentListCreateView(generics.ListCreateAPIView):
-    """
-    List comments on a post or create a new comment
-    GET /posts/{post_id}/comments/
-    POST /posts/{post_id}/comments/
-    """
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     
     def get_queryset(self):
-        post_id = self.kwargs['post_id']
+        post_id = self.kwargs.get('post_id')
         return Comment.objects.filter(post_id=post_id).order_by('-created_at')
     
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
-    
-    def perform_create(self, serializer):
-        post = get_object_or_404(Post, id=self.kwargs['post_id'])
-        serializer.save(user=self.request.user, post=post)
+    def create(self, request, *args, **kwargs):
+        post_id = self.kwargs.get('post_id')
+        post = get_object_or_404(Post, id=post_id)
+        
+        data = request.data.copy()
+        data.pop('post', None)
+        
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        comment = serializer.save(user=request.user, post=post)
+        
+        if post.user != request.user:
+            Notification.objects.create(
+                recipient=post.user, actor=request.user, verb='comment',
+                target_id=comment.id, target_type='comment'
+            )
+        
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class CommentRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Get, update, or delete a comment
-    GET /comments/{id}/
-    PATCH /comments/{id}/
-    DELETE /comments/{id}/
-    """
     queryset = Comment.objects.all()
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -353,3 +279,49 @@ class CommentRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
         if instance.user != self.request.user:
             raise PermissionDenied("You can only delete your own comments")
         instance.delete()
+
+
+# ========== NOTIFICATION VIEWS ==========
+class NotificationListView(generics.ListAPIView):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        return Notification.objects.filter(recipient=self.request.user)
+
+
+class NotificationMarkReadView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, pk):
+        notification = get_object_or_404(Notification, id=pk, recipient=request.user)
+        notification.read = True
+        notification.save()
+        return Response({'status': 'marked as read'})
+
+
+class NotificationMarkAllReadView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        Notification.objects.filter(recipient=request.user, read=False).update(read=True)
+        return Response({'status': 'all marked as read'})
+
+
+class NotificationUnreadCountView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        count = Notification.objects.filter(recipient=request.user, read=False).count()
+        return Response({'count': count})
+
+
+class SuggestionsView(generics.ListAPIView):
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        following_ids = Follow.objects.filter(follower=self.request.user).values_list('following_id', flat=True)
+        return User.objects.exclude(
+            id__in=list(following_ids) + [self.request.user.id]
+        ).order_by('-posts_count')[:20]

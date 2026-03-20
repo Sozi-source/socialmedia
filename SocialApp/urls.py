@@ -14,8 +14,10 @@ urlpatterns = [
     # Users
     path('users/', views.UserListView.as_view(), name='user-list'),
     path('users/<int:pk>/', views.UserDetailView.as_view(), name='user-detail'),
+    path('users/<int:user_id>/posts/', views.UserPostsView.as_view(), name='user-posts'),
     path('users/<int:user_id>/followers/', views.FollowersListView.as_view(), name='followers'),
     path('users/<int:user_id>/following/', views.FollowingListView.as_view(), name='following'),
+    path('users/suggestions/', views.SuggestionsView.as_view(), name='user-suggestions'),
     
     # Posts
     path('posts/', views.PostListCreateView.as_view(), name='post-list'),
@@ -31,4 +33,10 @@ urlpatterns = [
     
     # Follows
     path('follow/<int:user_id>/', views.FollowToggleView.as_view(), name='follow-toggle'),
+    
+    # Notifications
+    path('notifications/', views.NotificationListView.as_view(), name='notifications'),
+    path('notifications/<int:pk>/read/', views.NotificationMarkReadView.as_view(), name='notification-mark-read'),
+    path('notifications/read-all/', views.NotificationMarkAllReadView.as_view(), name='notification-mark-all-read'),
+    path('notifications/unread-count/', views.NotificationUnreadCountView.as_view(), name='notification-unread-count'),
 ]
