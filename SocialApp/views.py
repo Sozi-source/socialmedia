@@ -8,7 +8,23 @@ from django.db.models import Q
 from .models import Post, User, Comment, Like, Follow
 from .serializers import UserSerializer, UserRegistrationSerializer, FollowSerializer, PostSerializer, CommentSerializer, LikeSerializer
 from rest_framework.exceptions import PermissionDenied
+from django.http import JsonResponse
+
 # Create your views here.
+# ROOT API
+def home(request):
+    return JsonResponse({
+        'message': 'Welcome to SocialMedia API',
+        'endpoints': [
+            '/admin/',
+            '/api/auth/register/',
+            '/api/auth/login/',
+            '/api/users/',
+            '/api/posts/',
+            '/api/feed/',
+        ]
+    })
+
 class UserRegistrationView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserRegistrationSerializer
