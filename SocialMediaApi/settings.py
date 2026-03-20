@@ -1,18 +1,18 @@
 """
 Django settings for SocialMediaApi project.
+Production-ready configuration for Render deployment.
 """
 
 from pathlib import Path
 from datetime import timedelta
 import os
+import dj_database_url
 
-# Build paths
+# ========== BASE ==========
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-bakm95wc^(xtlx+ya%sg4=efqmm^=18jp0f06f!78q!utrsrm@')
+SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me-in-production')
 
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = [
@@ -20,10 +20,9 @@ ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
     '0.0.0.0',
-    '*'
 ]
 
-# Application definition
+# ========== APPLICATIONS ==========
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -38,10 +37,12 @@ INSTALLED_APPS = [
     'SocialApp',
 ]
 
+# ========== MIDDLEWARE ==========
+# Order matters: CorsMiddleware and SecurityMiddleware must be first
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -70,52 +71,44 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'SocialMediaApi.wsgi.application'
 
-# Database - SQLite (simple, works on Render)
+# ========== DATABASE ==========
+# Uses DATABASE_URL env var on Render (PostgreSQL), falls back to SQLite locally.
+# On Render: set DATABASE_URL in the environment dashboard.
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
 }
 
-# Password validation
+# ========== AUTH ==========
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-# Internationalization
+AUTH_USER_MODEL = 'SocialApp.User'
+
+# ========== INTERNATIONALISATION ==========
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# Static files
+# ========== STATIC & MEDIA FILES ==========
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-# Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Custom user model
-AUTH_USER_MODEL = 'SocialApp.User'
-
-# ========== REST FRAMEWORK SETTINGS ==========
+# ========== REST FRAMEWORK ==========
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -127,9 +120,7 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
-    ) if not DEBUG else (
-        'rest_framework.renderers.JSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',
+        *(('rest_framework.renderers.BrowsableAPIRenderer',) if DEBUG else ()),
     ),
     'DEFAULT_PARSER_CLASSES': (
         'rest_framework.parsers.JSONParser',
@@ -138,7 +129,7 @@ REST_FRAMEWORK = {
     ),
 }
 
-# ========== JWT SETTINGS ==========
+# ========== JWT ==========
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
@@ -155,11 +146,13 @@ SIMPLE_JWT = {
     'TOKEN_TYPE_CLAIM': 'token_type',
 }
 
-# ========== CORS SETTINGS ==========
+# ========== CORS ==========
 CORS_ALLOWED_ORIGINS = [
     "https://socialmedia-fo4i.onrender.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    # Add your deployed Next.js URL here when you deploy it:
+    # "https://your-nextjs-app.vercel.app",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -185,22 +178,27 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-# ========== CSRF SETTINGS ==========
+# ========== CSRF ==========
 CSRF_TRUSTED_ORIGINS = [
     "https://socialmedia-fo4i.onrender.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    # Add your deployed Next.js URL here when you deploy it:
+    # "https://your-nextjs-app.vercel.app",
 ]
 
-# ========== SECURITY SETTINGS ==========
+# ========== SECURITY (production only) ==========
+# SECURE_SSL_REDIRECT is intentionally excluded here.
+# Render's load balancer handles HTTPS termination — enabling it in Django
+# causes redirect loops and the HTTP/HTTPS mismatch errors you saw.
 if not DEBUG:
-    SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     X_FRAME_OPTIONS = 'DENY'
 
 # ========== LOGGING ==========
