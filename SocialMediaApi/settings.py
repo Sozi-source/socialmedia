@@ -156,6 +156,7 @@ SIMPLE_JWT = {
 
 # ========== CORS ==========
 CORS_ALLOWED_ORIGINS = [
+    "https://e-chat-plum.vercel.app",
     "https://socialmedia-fo4i.onrender.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -186,6 +187,7 @@ CORS_ALLOW_HEADERS = [
 
 # ========== CSRF ==========
 CSRF_TRUSTED_ORIGINS = [
+    "https://e-chat-plum.vercel.app",
     "https://socialmedia-fo4i.onrender.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
